@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>AI 칩 카운터 Pro</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif;background:#eef2f7;margin:0;padding:calc(env(safe-area-inset-top) + 10px) 10px calc(env(safe-area-inset-bottom) + 14px);color:#111827}
+    .app{max-width:860px;margin:0 auto;background:#fff;border-radius:18px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+    h1{margin:0 0 8px;font-size:26px}
+    .note,.status,.help{border-radius:14px;padding:12px;line-height:1.5;font-size:14px;margin-bottom:12px}
+    .note{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412}
+    .help{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8}
+    .status{background:#f1f5f9}
+    .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;aspect-ratio:3/4;margin-bottom:12px}
+    video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    #overlay{pointer-events:none}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .buttons{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+    button,select,input[type=range]{width:100%;min-height:48px;border-radius:14px;border:1px solid #cbd5e1;font-size:16px;box-sizing:border-box}
+    button{background:#2563eb;color:#fff;font-weight:700;padding:12px}
+    .secondary{background:#fff;color:#111827;border-color:#cbd5e1}
+    .cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+    .card{border-radius:14px;color:#fff;padding:12px;font-weight:800;font-size:16px}
+    .orange{background:#ea580c}.brown{background:#7c4a21}.pink{background:#ec4899}.blue{background:#2563eb}
+    .total{background:#eef2ff;color:#1e3a8a;border-radius:16px;padding:14px;text-align:center;margin-bottom:12px}
+    .total .v{font-size:34px;font-weight:900}
+    .panel{background:#fafafa;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin-bottom:12px}
+    .small{font-size:13px;color:#4b5563;line-height:1.5}
+    .sliderLabel{font-size:13px;margin:4px 0}
+  </style>
+</head>
+<body>
+<div class="app">
+  <h1>AI 칩 카운터 Pro</h1>
+  <div class="note">
+    이전 버전보다 정확도를 높이기 위해 <strong>OpenCV 기반</strong>으로 만들었습니다.<br>
+    방법: 색 분리 → 노이즈 제거 → 원형/면적/겹침 보정 → 총액 계산<br>
+    <strong>칩 색상:</strong> 5000=Orange / 1000=Brown / 500=Pink / 100=Blue
+  </div>
+
+  <div class="videoWrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
+
+  <div class="buttons">
+    <button id="startBtn">카메라 시작</button>
+    <button id="pauseBtn" class="secondary">일시정지</button>
+    <button id="stopBtn" class="secondary">중지</button>
+    <button id="switchBtn" class="secondary">전후면 전환</button>
+  </div>
+
+  <div class="row2">
+    <select id="quality">
+      <option value="fast">속도 우선</option>
+      <option value="balanced" selected>균형</option>
+      <option value="accurate">정확도 우선</option>
+    </select>
+    <button id="calibrateBtn" class="secondary">현재 화면으로 자동 보정</button>
+  </div>
+
+  <div class="cards">
+    <div class="card orange">5000: <span id="count5000">0</span></div>
+    <div class="card brown">1000: <span id="count1000">0</span></div>
+    <div class="card pink">500: <span id="count500">0</span></div>
+    <div class="card blue">100: <span id="count100">0</span></div>
+  </div>
+
+  <div class="total">
+    <div>총액</div>
+    <div class="v" id="total">0</div>
+  </div>
+
+  <div class="status" id="status">OpenCV 로딩 중...</div>
+
+  <div class="panel">
+    <div style="font-weight:700;margin-bottom:8px;">미세 조정</div>
+    <div class="sliderLabel">원형 판정 민감도: <span id="circVal">0.55</span></div>
+    <input id="circSlider" type="range" min="0.35" max="0.85" step="0.01" value="0.55">
+    <div class="sliderLabel">겹침 보정 강도: <span id="overlapVal">0.65</span></div>
+    <input id="overlapSlider" type="range" min="0.2" max="1.2" step="0.05" value="0.65">
+  </div>
+
+  <div class="help">
+    정확도 높이는 팁<br>
+    1) 배경은 검정/흰색처럼 단순하게<br>
+    2) 카메라는 칩 위에서 최대한 수직으로<br>
+    3) 그림자 줄이기<br>
+    4) 색이 헷갈리면 “현재 화면으로 자동 보정” 누르기
+  </div>
+
+  <div class="small">
+    iPhone에서는 보통 <strong>HTTPS 주소</strong>에서 열어야 카메라가 잘 동작합니다.
+    이 버전은 GitHub Pages 같은 곳에 올려서 쓰는 걸 권장합니다.
+  </div>
+</div>
+
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script>
+const video=document.getElementById("video");
+const overlay=document.getElementById("overlay");
+const ctx=overlay.getContext("2d");
+const statusEl=document.getElementById("status");
+const qualityEl=document.getElementById("quality");
+const circSlider=document.getElementById("circSlider");
+const overlapSlider=document.getElementById("overlapSlider");
+const circVal=document.getElementById("circVal");
+const overlapVal=document.getElementById("overlapVal");
+
+let stream=null,running=false,paused=false,facingMode="environment",rafId=null,cvReady=false;
+const buffer=document.createElement("canvas");
+const bctx=buffer.getContext("2d",{willReadFrequently:true});
+
+const COLOR_RULES={
+  orange:{value:5000,low:[5,90,70],high:[28,255,255],draw:"#ff7a00"},
+  brown:{value:1000,low:[5,65,30],high:[24,220,145],draw:"#7b4b2a"},
+  pink:{value:500,low:[145,60,80],high:[179,255,255],draw:"#ff4db8",altLow:[0,60,80],altHigh:[12,255,255]},
+  blue:{value:100,low:[92,70,50],high:[132,255,255],draw:"#2d7dff"}
+};
+
+function setStatus(s){statusEl.textContent=s;}
+circSlider.addEventListener("input",()=>circVal.textContent=circSlider.value);
+overlapSlider.addEventListener("input",()=>overlapVal.textContent=overlapSlider.value);
+
+document.getElementById("startBtn").addEventListener("click",startCamera);
+document.getElementById("pauseBtn").addEventListener("click",togglePause);
+document.getElementById("stopBtn").addEventListener("click",stopCamera);
+document.getElementById("switchBtn").addEventListener("click",switchCamera);
+document.getElementById("calibrateBtn").addEventListener("click",autoCalibrate);
+
+window.Module={onRuntimeInitialized(){cvReady=true;setStatus("OpenCV 준비 완료. 카메라 시작을 눌러주세요.");}};
+
+async function startCamera(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){setStatus("이 브라우저에서는 카메라를 사용할 수 없습니다.");return;}
+  if(!cvReady){setStatus("아직 OpenCV 로딩 중입니다. 잠시 후 다시 눌러주세요.");return;}
+  stopCamera();
+  try{
+    const q=qualityEl.value;
+    let width=1280,height=720;
+    if(q==="fast"){width=960;height=540;}
+    if(q==="accurate"){width=1920;height=1080;}
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:width},height:{ideal:height}},audio:false});
+    video.srcObject=stream;
+    await video.play();
+    running=true; paused=false;
+    document.getElementById("pauseBtn").textContent="일시정지";
+    setStatus("실시간 분석 중...");
+    loop();
+  }catch(e){setStatus("카메라를 열 수 없습니다. Safari/HTTPS/권한을 확인해주세요.");}
+}
+function stopCamera(){
+  running=false; paused=false;
+  if(rafId) cancelAnimationFrame(rafId);
+  rafId=null;
+  if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+  video.srcObject=null;
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+}
+function togglePause(){
+  paused=!paused;
+  document.getElementById("pauseBtn").textContent=paused?"다시 시작":"일시정지";
+  setStatus(paused?"일시정지됨.":"실시간 분석 중...");
+  if(!paused&&running) loop();
+}
+async function switchCamera(){facingMode=facingMode==="environment"?"user":"environment"; if(running) await startCamera();}
+function loop(){if(!running||paused) return; rafId=requestAnimationFrame(processFrame);}
+
+function processFrame(){
+  if(!running||paused||video.readyState<2){loop();return;}
+  const vw=video.videoWidth,vh=video.videoHeight;
+  if(!vw||!vh){loop();return;}
+  overlay.width=vw; overlay.height=vh;
+  const q=qualityEl.value;
+  let targetW=640;
+  if(q==="fast") targetW=480;
+  if(q==="accurate") targetW=800;
+  const scale=Math.min(1,targetW/vw);
+  const w=Math.max(320,Math.round(vw*scale)), h=Math.max(240,Math.round(vh*scale));
+  buffer.width=w; buffer.height=h;
+  bctx.drawImage(video,0,0,w,h);
+
+  const imgData=bctx.getImageData(0,0,w,h);
+  const src=cv.matFromImageData(imgData);
+  const hsv=new cv.Mat();
+  cv.cvtColor(src,hsv,cv.COLOR_RGBA2RGB);
+  cv.cvtColor(hsv,hsv,cv.COLOR_RGB2HSV);
+  ctx.clearRect(0,0,vw,vh);
+
+  const orangeCount=detectColor("orange",hsv,w,h,vw,vh);
+  const brownCount=detectColor("brown",hsv,w,h,vw,vh);
+  const pinkCount=detectColor("pink",hsv,w,h,vw,vh);
+  const blueCount=detectColor("blue",hsv,w,h,vw,vh);
+
+  document.getElementById("count5000").textContent=orangeCount;
+  document.getElementById("count1000").textContent=brownCount;
+  document.getElementById("count500").textContent=pinkCount;
+  document.getElementById("count100").textContent=blueCount;
+  document.getElementById("total").textContent=(orangeCount*5000+brownCount*1000+pinkCount*500+blueCount*100).toLocaleString();
+
+  src.delete(); hsv.delete();
+  loop();
+}
+
+function detectColor(name,hsv,w,h,vw,vh){
+  const rule=COLOR_RULES[name];
+  const mask=new cv.Mat();
+  const low=new cv.Mat(h,w,hsv.type(),rule.low.concat([0]));
+  const high=new cv.Mat(h,w,hsv.type(),rule.high.concat([255]));
+  cv.inRange(hsv,low,high,mask);
+
+  if(rule.altLow&&rule.altHigh){
+    const altMask=new cv.Mat();
+    const altLow=new cv.Mat(h,w,hsv.type(),rule.altLow.concat([0]));
+    const altHigh=new cv.Mat(h,w,hsv.type(),rule.altHigh.concat([255]));
+    cv.inRange(hsv,altLow,altHigh,altMask);
+    cv.bitwise_or(mask,altMask,mask);
+    altMask.delete(); altLow.delete(); altHigh.delete();
+  }
+
+  const kernel=cv.getStructuringElement(cv.MORPH_ELLIPSE,new cv.Size(5,5));
+  cv.morphologyEx(mask,mask,cv.MORPH_OPEN,kernel);
+  cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,kernel);
+  cv.GaussianBlur(mask,mask,new cv.Size(5,5),0);
+
+  const contours=new cv.MatVector();
+  const hierarchy=new cv.Mat();
+  cv.findContours(mask,contours,hierarchy,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+
+  let count=0;
+  const circularityThreshold=parseFloat(circSlider.value);
+  const overlapFactor=parseFloat(overlapSlider.value);
+
+  for(let i=0;i<contours.size();i++){
+    const cnt=contours.get(i);
+    const area=cv.contourArea(cnt);
+    if(area<180){cnt.delete();continue;}
+    const peri=cv.arcLength(cnt,true);
+    const circularity=peri>0?(4*Math.PI*area)/(peri*peri):0;
+    const rect=cv.boundingRect(cnt);
+    const aspect=rect.width>rect.height?rect.width/rect.height:rect.height/rect.width;
+
+    if(circularity>=circularityThreshold&&aspect<1.8){
+      count+=1;
+      drawScaledRect(rect,w,h,vw,vh,rule.draw,false);
+    }else{
+      const minDim=Math.min(rect.width,rect.height);
+      if(minDim>18&&area>450){
+        const estimated=Math.max(1,Math.round((area/(Math.PI*Math.pow(minDim/2,2)))*overlapFactor));
+        count+=estimated;
+        drawScaledRect(rect,w,h,vw,vh,rule.draw,true);
+      }
+    }
+    cnt.delete();
+  }
+
+  low.delete(); high.delete(); kernel.delete(); contours.delete(); hierarchy.delete(); mask.delete();
+  return count;
+}
+
+function drawScaledRect(rect,w,h,vw,vh,color,dashed){
+  const sx=vw/w, sy=vh/h;
+  ctx.strokeStyle=color; ctx.lineWidth=3;
+  if(dashed) ctx.setLineDash([8,6]); else ctx.setLineDash([]);
+  ctx.strokeRect(rect.x*sx,rect.y*sy,rect.width*sx,rect.height*sy);
+  ctx.setLineDash([]);
+}
+
+function autoCalibrate(){
+  if(!running||video.readyState<2||!cvReady){setStatus("카메라가 켜진 상태에서 자동 보정을 눌러주세요.");return;}
+  const vw=video.videoWidth, vh=video.videoHeight;
+  const w=480, h=Math.round(vh*(480/vw));
+  buffer.width=w; buffer.height=h;
+  bctx.drawImage(video,0,0,w,h);
+  const imgData=bctx.getImageData(0,0,w,h);
+  const data=imgData.data;
+
+  const center=[
+    {name:"orange",x:0.18,y:0.5},
+    {name:"brown",x:0.38,y:0.5},
+    {name:"pink",x:0.62,y:0.5},
+    {name:"blue",x:0.82,y:0.5}
+  ];
+
+  center.forEach(c=>{
+    const sample=sampleHSV(data,w,h,Math.round(w*c.x),Math.round(h*c.y),18);
+    if(!sample) return;
+    const lowH=Math.max(0,sample.h-14), highH=Math.min(179,sample.h+14);
+    const lowS=Math.max(35,sample.s-70), highS=Math.min(255,sample.s+70);
+    const lowV=Math.max(25,sample.v-70), highV=Math.min(255,sample.v+70);
+    COLOR_RULES[c.name].low=[lowH,lowS,lowV];
+    COLOR_RULES[c.name].high=[highH,highS,highV];
+  });
+
+  setStatus("자동 보정 완료. 색 범위를 현재 화면 기준으로 조정했습니다.");
+}
+
+function sampleHSV(data,w,h,cx,cy,radius){
+  let hs=[],ss=[],vs=[];
+  for(let y=cy-radius;y<=cy+radius;y++){
+    for(let x=cx-radius;x<=cx+radius;x++){
+      if(x<0||y<0||x>=w||y>=h) continue;
+      if((x-cx)*(x-cx)+(y-cy)*(y-cy)>radius*radius) continue;
+      const i=(y*w+x)*4;
+      const hsv=rgbToHsv255(data[i],data[i+1],data[i+2]);
+      hs.push(hsv.h); ss.push(hsv.s); vs.push(hsv.v);
+    }
+  }
+  if(!hs.length) return null;
+  hs.sort((a,b)=>a-b); ss.sort((a,b)=>a-b); vs.sort((a,b)=>a-b);
+  const mid=Math.floor(hs.length/2);
+  return {h:hs[mid],s:ss[mid],v:vs[mid]};
+}
+
+function rgbToHsv255(r,g,b){
+  r/=255; g/=255; b/=255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h=0, s=max===0?0:d/max, v=max;
+  if(d!==0){
+    switch(max){
+      case r:h=((g-b)/d)%6;break;
+      case g:h=(b-r)/d+2;break;
+      case b:h=(r-g)/d+4;break;
+    }
+    h*=60; if(h<0) h+=360;
+  }
+  return {h:Math.round(h/2), s:Math.round(s*255), v:Math.round(v*255)};
+}
+</script>
+</body>
+</html>
